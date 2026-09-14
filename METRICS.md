@@ -49,21 +49,20 @@ Both MIB trees were walked live against the device (`10.50.20.3`, SNMPv3, user `
 | Field | OID | Source MIB | Raw type / scaling | Meaning |
 |---|---|---|---|---|
 | `input_voltage_volts` | `1.3.6.1.4.1.232.165.3.3.4.1.2.1` | CPQPOWER `upsInputVoltage` (table, phase 1) | INTEGER RMS volts, no scaling | Mains input voltage |
-| `input_current_amps` | `1.3.6.1.2.1.33.1.3.3.1.4.1` | Standard `upsInputCurrent` (table, line 1) | INTEGER, **0.1A** (`conversion = "float(1)"`) | Mains input current |
+| `input_current_amps` | `1.3.6.1.2.1.33.1.3.3.1.4.1` | Standard `upsInputCurrent` (table, line 1) | INTEGER, **0.1A** (`conversion = "float(1)"`) | Mains input current - see "Known open issue" below |
+| `input_realpower_watts` | `1.3.6.1.4.1.232.165.3.3.4.1.4.1` | CPQPOWER `upsInputWatts` (table, phase 1) | INTEGER Watts, no scaling | Mains real input power - see "Known open issue" below |
 | `input_frequency_hz` | `1.3.6.1.4.1.232.165.3.3.1.0` | CPQPOWER `upsInputFrequency` | INTEGER, **0.1Hz** (`conversion = "float(1)"`) | Mains input frequency |
-| `input_realpower_watts` | `1.3.6.1.4.1.232.165.3.3.4.1.4.1` | CPQPOWER `upsInputWatts` (table, phase 1) | INTEGER Watts, no scaling | Mains real input power |
 | `input_source_code` | `1.3.6.1.4.1.232.165.3.3.5.0` | CPQPOWER `upsInputSource` | INTEGER, no scaling | Present input source enum (see below) |
 | `output_voltage_volts` | `1.3.6.1.4.1.232.165.3.4.4.1.2.1` | CPQPOWER `upsOutputVoltage` (table, phase 1) | INTEGER RMS volts, no scaling | Output voltage |
 | `output_current_amps` | `1.3.6.1.2.1.33.1.4.4.1.3.1` | Standard `upsOutputCurrent` (table, line 1) | INTEGER, **0.1A** (`conversion = "float(1)"`) | Output current |
 | `output_frequency_hz` | `1.3.6.1.4.1.232.165.3.4.2.0` | CPQPOWER `upsOutputFrequency` | INTEGER, **0.1Hz** (`conversion = "float(1)"`) | Output frequency |
-| `output_realpower_watts` | `1.3.6.1.4.1.232.165.3.4.4.1.4.1` | CPQPOWER `upsOutputWatts` (table, phase 1) | INTEGER Watts, no scaling | Output **real** power |
-| `output_apparentpower_va` | `1.3.6.1.2.1.33.1.4.4.1.4.1` | Standard `upsOutputPower` (table, line 1) | INTEGER VA, no scaling | Output **apparent** power |
+| `output_realpower_watts` | `1.3.6.1.4.1.232.165.3.4.4.1.4.1` | CPQPOWER `upsOutputWatts` (table, phase 1) | INTEGER Watts, no scaling | Output power |
 
 **`input_source_code` enum** (CPQPOWER `upsInputSource`): `1`=other, `2`=none, `3`=primaryUtility, `4`=bypassFeed, `5`=secondaryUtility, `6`=generator, `7`=flywheel, `8`=fuelcell.
 
 This UPS is single-phase (`upsInputNumPhases`/`upsOutputNumPhases` = 1 in both MIB trees), so every table OID above is read directly at table index 1 rather than walked as a multi-row table.
 
-**Real vs. apparent power**: `output_realpower_watts` (Watts) and `output_apparentpower_va` (VA) are deliberately pulled from two different MIB trees because CPQPOWER-MIB only exposes real power and standard UPS-MIB only exposes apparent power for the output side. Their ratio (W/VA) is the power factor, computed in the Grafana panel rather than in Telegraf. Neither MIB tree exposes an apparent-power value for the *input* side — both only expose real (true) input power — so no `input_apparentpower` field exists; it was not fabricated to match the output side.
+**Real vs. apparent power (removed after live verification)**: the design originally pulled `output_realpower_watts` (Watts, CPQPOWER) alongside `output_apparentpower_va` (VA, standard UPS-MIB `upsOutputPower`) on the theory that their ratio would give a real power-factor reading, since a single first-pass `snmpwalk` of each tree showed different values (216W vs 297W). That comparison was **wrong** - the two walks were separate, non-atomic commands, and load had simply drifted between them. A live, paired `snmpget` against both OIDs simultaneously (run several times, at different loads: 270/270, 243/243 x4, 216/216) showed they are **always identical**. This device's firmware does not actually differentiate real from apparent power - both OIDs source the same internal register. `output_apparentpower_va` was removed from `telegraf.conf` and the dashboard as redundant; keeping it would have implied a power-factor insight the hardware doesn't actually provide. This is exactly the kind of thing Phase 5 (live validation) exists to catch - a plausible-looking single-sample cross-check turned out to be an artifact of measurement timing, not a real property of the device.
 
 ### Measurement: `snmp_ups_outlet` (polled every 30s, tagged by `index` = outlet segment 1 or 2)
 
@@ -106,6 +105,19 @@ This UPS has exactly 2 independently controllable outlet segments (`upsNumRecept
 | `outlet_count` | `1.3.6.1.4.1.232.165.3.10.1.0` | CPQPOWER `upsNumReceptacles` | Number of independently controllable outlet segments |
 
 **`test_result_code` enum** (CPQPOWER `upsTestBatteryStatus`): `1`=unknown, `2`=passed, `3`=failed, `4`=inProgress, `5`=notSupported, `6`=inhibited, `7`=scheduled.
+
+## Known open issue: input current/power reads 0 on this specific unit
+
+`input_current_amps` and `input_realpower_watts` have so far always read `0` on this device, across every check performed: the original `snmpwalk`, hours of dashboard history, and several live triple-`snmpget` runs at different loads, including moments where output power was simultaneously confirmed non-zero (~250W) - which rules out these OIDs simply being wrong or the field being zero because nothing is drawing power.
+
+This was initially written up as a hardware limitation ("this line-interactive UPS has no input-side current sensor"), but that conclusion doesn't hold up under research:
+- A different real HP R/T3000 **G2** unit, on the identical CPQPOWER-MIB tree, is documented (networkupstools.org) reporting `input.current: 0.40` - a working, non-zero value.
+- Other AF465A-carded HP UPS units (per a NUT mailing-list thread) report non-zero per-phase input current.
+- An HPE community thread has another R/T3000 owner reporting non-zero (even higher-than-output) input current.
+
+So input current metering is clearly supported by this MIB/hardware family in general - it is very likely something specific to *this* unit (it was purchased used, with a known pre-existing battery defect, so a faulty or disconnected input CT wouldn't be a stretch) or a bug specific to this G4 firmware build, rather than a documented limitation of the model line. No firmware changelog, HPE/Eaton documentation, or AF465A metering config toggle addressing this was found either way.
+
+The fields are kept in `telegraf.conf` and the dashboard rather than removed, since polling them costs nothing and the graphs will simply start working with no config changes if this ever gets resolved (firmware update, hardware repair, or an HPE/Eaton support case). Each panel/field is annotated with this caveat rather than presented as a confirmed working measurement.
 
 ## Deliberately excluded
 

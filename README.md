@@ -5,13 +5,18 @@ A dashboard to display data from my HP R/T3000 HV INTL UPS (G4, Eaton-manufactur
 See [METRICS.md](./METRICS.md) for the full field-by-field reference: every OID, its source MIB, unit/scaling, and why it was (or wasn't) included.
 
 ### Info
-
-_No screenshot yet - this dashboard hasn't been deployed against a live Grafana instance. Add one to `./assets/` and link it here once it's running._
+![Screenshot 1](./assets/grafana_board_1.png)
+![Screenshot 2](./assets/grafana_board_2.png)
+![Screenshot 3](./assets/grafana_board_3.png)
 
 ### Updates
 
 - **13.09.2026**
   - Initial version
+  - Set `agent_host_tag = "source"` on all SNMP blocks to silence a Telegraf deprecation warning
+  - Removed `output_apparentpower_va` (and the "Real vs Apparent Power" panel) - live paired `snmpget`s proved this device reports the identical raw value for both its "real" and "apparent" output power OIDs, so the field added no information
+  - Fixed all Device Info panels showing "No data" - Grafana's Stat/Gauge `reduceOptions.fields` was left at its default `""`, which only matches numeric fields; string-valued panels (manufacturer, model, serial number, firmware versions, MAC, part number) need it set to `"/^Value$/"` to be picked up at all. Confirmed via Grafana's query inspector that the query itself was always returning correct data - this was a dashboard panel config bug, not an SNMP/Telegraf/InfluxDB issue.
+  - `input_current_amps`/`input_realpower_watts`: briefly removed after reading `0` on every live check, then **re-added** after research showed other HP R/T3000 units (including a G2 on the identical MIB tree) report this metric successfully - it's very likely specific to this unit (bought used, known pre-existing battery defect) rather than a model limitation. See [METRICS.md](./METRICS.md#known-open-issue-input-currentpower-reads-0-on-this-specific-unit).
 
 ### Device
 
