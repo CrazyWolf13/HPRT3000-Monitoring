@@ -54,7 +54,7 @@ See [METRICS.md](./METRICS.md) for the full field-by-field reference: every OID,
 7. Enjoy
 ```
 
-[How to: Add Prometheus Datasource to Grafana](https://grafana.com/docs/grafana/latest/datasources/prometheus/configure/)
+[How to: Add InfluxDB Datasource to Grafana](https://grafana.com/docs/grafana/latest/datasources/influxdb/configure/)
 
 ### Testing SNMP manually
 
